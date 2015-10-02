@@ -35,6 +35,7 @@
     <dep.slf4j.version>1.7.6</dep.slf4j.version>
     <forkCount>2</forkCount>
     <parquet.version>1.6.0rc3-drill-r0.3</parquet.version>
+    <sqlline.version>1.1.9-drill-r7</sqlline.version>
 
     <!--
       Currently Hive storage plugin only supports Apache Hive 1.0.0 or vendor specific variants of the
@@ -170,6 +171,7 @@
             <exclude>**/*.csv</exclude>
             <exclude>**/*.tsv</exclude>
             <exclude>**/*.txt</exclude>
+            <exclude>**/*.ssv</exclude>
             <exclude>**/drill-*.conf</exclude>
             <exclude>**/.buildpath</exclude>
             <exclude>**/*.proto</exclude>
@@ -1220,22 +1222,34 @@
           <dependency>
             <groupId>sqlline</groupId>
             <artifactId>sqlline</artifactId>
-            <version>1.1.9-drill-r5</version>
+            <version>${sqlline.version}</version>
           </dependency>
 
           <dependency>
             <groupId>org.apache.calcite</groupId>
             <artifactId>calcite-core</artifactId>
-            <version>1.1.0-drill-r15</version>
+            <version>1.4.0-drill-r6</version>
             <exclusions>
               <exclusion>
                 <groupId>org.jgrapht</groupId>
                 <artifactId>jgrapht-jdk1.5</artifactId>
               </exclusion>
-            <exclusion>
+              <exclusion>
                 <groupId>commons-logging</groupId>
                 <artifactId>commons-logging</artifactId>
-            </exclusion>
+              </exclusion>
+              <exclusion>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+              </exclusion>
+              <exclusion>
+                 <groupId>com.fasterxml.jackson.core</groupId>
+                 <artifactId>jackson-core</artifactId>
+              </exclusion>
+              <exclusion>
+                 <groupId>com.fasterxml.jackson.core</groupId>
+                 <artifactId>jackson-databind</artifactId>
+              </exclusion>
             </exclusions>
           </dependency>
 
@@ -1261,6 +1275,12 @@
                 <artifactId>checkstyle-optional</artifactId>
               </exclusion>
             </exclusions>
+          </dependency>
+
+          <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk15on</artifactId>
+            <version>1.52</version>
           </dependency>
 
           <!-- Test Dependencies -->
@@ -1564,7 +1584,7 @@
           <dependency>
             <groupId>sqlline</groupId>
             <artifactId>sqlline</artifactId>
-            <version>1.1.9-drill-r5</version>
+            <version>${sqlline.version}</version>
           </dependency>
           <!-- Test Dependencies -->
           <dependency>

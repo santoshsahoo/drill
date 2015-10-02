@@ -135,6 +135,8 @@ public class ParquetFormatPlugin implements FormatPlugin{
     options.put(FileSystem.FS_DEFAULT_NAME_KEY, ((FileSystemConfig)writer.getStorageConfig()).connection);
 
     options.put(ExecConstants.PARQUET_BLOCK_SIZE, context.getOptions().getOption(ExecConstants.PARQUET_BLOCK_SIZE).num_val.toString());
+    options.put(ExecConstants.PARQUET_PAGE_SIZE, context.getOptions().getOption(ExecConstants.PARQUET_PAGE_SIZE).num_val.toString());
+    options.put(ExecConstants.PARQUET_DICT_PAGE_SIZE, context.getOptions().getOption(ExecConstants.PARQUET_DICT_PAGE_SIZE).num_val.toString());
 
     options.put(ExecConstants.PARQUET_WRITER_COMPRESSION_TYPE,
         context.getOptions().getOption(ExecConstants.PARQUET_WRITER_COMPRESSION_TYPE).string_val);
@@ -204,7 +206,7 @@ public class ParquetFormatPlugin implements FormatPlugin{
       // TODO: we only check the first file for directory reading.  This is because
       if(selection.containsDirectories(fs)){
         if(isDirReadable(fs, selection.getFirstPath(fs))){
-          return new FormatSelection(plugin.getConfig(), selection);
+          return new FormatSelection(plugin.getConfig(), selection.minusDirectories(fs));
         }
       }
       return super.isReadable(fs, selection);
@@ -217,13 +219,16 @@ public class ParquetFormatPlugin implements FormatPlugin{
           return true;
         } else {
 
+          if (fs.exists(new Path(dir.getPath(), Metadata.METADATA_FILENAME))) {
+            return true;
+          }
           PathFilter filter = new DrillPathFilter();
 
           FileStatus[] files = fs.listStatus(dir.getPath(), filter);
           if (files.length == 0) {
             return false;
           }
-          return super.isReadable(fs, files[0]);
+          return super.isFileReadable(fs, files[0]);
         }
       } catch (IOException e) {
         logger.info("Failure while attempting to check for Parquet metadata file.", e);

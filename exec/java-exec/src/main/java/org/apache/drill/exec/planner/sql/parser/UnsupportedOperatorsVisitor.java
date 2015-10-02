@@ -17,6 +17,7 @@
  */
 package org.apache.drill.exec.planner.sql.parser;
 
+import org.apache.calcite.sql.SqlNumericLiteral;
 import org.apache.drill.exec.ExecConstants;
 import org.apache.drill.exec.exception.UnsupportedOperatorCollector;
 import org.apache.drill.exec.ops.QueryContext;
@@ -35,7 +36,6 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.calcite.sql.SqlDataTypeSpec;
-import org.apache.calcite.sql.SqlSetOperator;
 
 import java.util.List;
 
@@ -88,9 +88,9 @@ public class UnsupportedOperatorsVisitor extends SqlShuttle {
     if(sqlCall instanceof SqlSelect) {
       SqlSelect sqlSelect = (SqlSelect) sqlCall;
 
-      // This is used to keep track of the window function which has been defined
-      SqlNode definedWindow = null;
       for(SqlNode nodeInSelectList : sqlSelect.getSelectList()) {
+        // If the window function is used with an alias,
+        // enter the first operand of AS operator
         if(nodeInSelectList.getKind() == SqlKind.AS
             && (((SqlCall) nodeInSelectList).getOperandList().get(0).getKind() == SqlKind.OVER)) {
           nodeInSelectList = ((SqlCall) nodeInSelectList).getOperandList().get(0);
@@ -110,26 +110,6 @@ public class UnsupportedOperatorsVisitor extends SqlShuttle {
           if(over.getOperandList().get(0) instanceof SqlCall) {
             SqlCall function = (SqlCall) over.getOperandList().get(0);
 
-            // DRILL-3195:
-            // The following window functions are temporarily disabled
-            // NTILE(), LAG(), LEAD(), FIRST_VALUE(), LAST_VALUE()
-            String functionName = function.getOperator().getName().toUpperCase();
-            switch(functionName) {
-              case "NTILE":
-              case "LAG":
-              case "LEAD":
-              case "FIRST_VALUE":
-              case "LAST_VALUE":
-                unsupportedOperatorCollector.setException(SqlUnsupportedException.ExceptionType.FUNCTION,
-                    "The window function " + functionName + " is not supported\n" +
-                    "See Apache Drill JIRA: DRILL-3195");
-                throw new UnsupportedOperationException();
-
-              default:
-                break;
-            }
-
-
             // DRILL-3182
             // Window function with DISTINCT qualifier is temporarily disabled
             if(function.getFunctionQuantifier() != null
@@ -139,35 +119,39 @@ public class UnsupportedOperatorsVisitor extends SqlShuttle {
                   "See Apache Drill JIRA: DRILL-3182");
               throw new UnsupportedOperationException();
             }
-          }
 
-          // DRILL-3196
-          // Disable multiple partitions in a SELECT-CLAUSE
-          SqlNode window = ((SqlCall) nodeInSelectList).operand(1);
-
-          // Partition window is referenced as a SqlIdentifier,
-          // which is defined in the window list
-          if(window instanceof SqlIdentifier) {
-            // Expand the SqlIdentifier as the expression defined in the window list
-            for(SqlNode sqlNode : sqlSelect.getWindowList()) {
-              if(((SqlWindow) sqlNode).getDeclName().equalsDeep(window, false)) {
-                window = sqlNode;
-                break;
+            // DRILL-3596: we only allow (<column-name>) or (<column-name>, 1)
+            final String functionName = function.getOperator().getName().toUpperCase();
+            if ("LEAD".equals(functionName) || "LAG".equals(functionName)) {
+              boolean supported = true;
+              if (function.operandCount() > 2) {
+                // we don't support more than 2 arguments
+                supported = false;
+              } else if (function.operandCount() == 2) {
+                SqlNode operand = function.operand(1);
+                if (operand instanceof SqlNumericLiteral) {
+                  SqlNumericLiteral offsetLiteral = (SqlNumericLiteral) operand;
+                  try {
+                    if (offsetLiteral.intValue(true) != 1) {
+                      // we don't support offset != 1
+                      supported = false;
+                    }
+                  } catch (AssertionError e) {
+                    // we only support offset as an integer
+                    supported = false;
+                  }
+                } else {
+                  // we only support offset as a numeric literal
+                  supported = false;
+                }
               }
-            }
 
-            assert !(window instanceof SqlIdentifier) : "Identifier should have been expanded as a window defined in the window list";
-          }
-
-          // In a SELECT-SCOPE, only a partition can be defined
-          if(definedWindow == null) {
-            definedWindow = window;
-          } else {
-            if(!definedWindow.equalsDeep(window, false)) {
-              unsupportedOperatorCollector.setException(SqlUnsupportedException.ExceptionType.FUNCTION,
-                  "Multiple window definitions in a single SELECT list is not currently supported \n" +
-                  "See Apache Drill JIRA: DRILL-3196");
-              throw new UnsupportedOperationException();
+              if (!supported) {
+                unsupportedOperatorCollector.setException(SqlUnsupportedException.ExceptionType.FUNCTION,
+                  "Function " + functionName + " only supports (<value expression>) or (<value expression>, 1)\n" +
+                    "See Apache DRILL JIRA: DRILL-3596");
+                throw new UnsupportedOperationException();
+              }
             }
           }
         }
@@ -324,5 +308,56 @@ public class UnsupportedOperatorsVisitor extends SqlShuttle {
   private boolean containsFlatten(SqlNode sqlNode) throws UnsupportedOperationException {
     return sqlNode instanceof SqlCall
         && ((SqlCall) sqlNode).getOperator().getName().toLowerCase().equals("flatten");
+  }
+
+  /**
+   * Disable multiple partitions in a SELECT-CLAUSE
+   * If multiple partitions are defined in the query,
+   * SqlUnsupportedException would be thrown to inform
+   * @param sqlSelect SELECT-CLAUSE in the query
+   */
+  private void detectMultiplePartitions(SqlSelect sqlSelect) {
+    for(SqlNode nodeInSelectList : sqlSelect.getSelectList()) {
+      // If the window function is used with an alias,
+      // enter the first operand of AS operator
+      if(nodeInSelectList.getKind() == SqlKind.AS
+          && (((SqlCall) nodeInSelectList).getOperandList().get(0).getKind() == SqlKind.OVER)) {
+        nodeInSelectList = ((SqlCall) nodeInSelectList).getOperandList().get(0);
+      }
+
+      if(nodeInSelectList.getKind() != SqlKind.OVER) {
+        continue;
+      }
+
+      // This is used to keep track of the window function which has been defined
+      SqlNode definedWindow = null;
+      SqlNode window = ((SqlCall) nodeInSelectList).operand(1);
+
+      // Partition window is referenced as a SqlIdentifier,
+      // which is defined in the window list
+      if(window instanceof SqlIdentifier) {
+        // Expand the SqlIdentifier as the expression defined in the window list
+        for(SqlNode sqlNode : sqlSelect.getWindowList()) {
+          if(((SqlWindow) sqlNode).getDeclName().equalsDeep(window, false)) {
+            window = sqlNode;
+            break;
+          }
+        }
+
+        assert !(window instanceof SqlIdentifier) : "Identifier should have been expanded as a window defined in the window list";
+      }
+
+      // In a SELECT-SCOPE, only a partition can be defined
+      if(definedWindow == null) {
+        definedWindow = window;
+      } else {
+        if(!definedWindow.equalsDeep(window, false)) {
+          unsupportedOperatorCollector.setException(SqlUnsupportedException.ExceptionType.FUNCTION,
+              "Multiple window definitions in a single SELECT list is not currently supported \n" +
+              "See Apache Drill JIRA: DRILL-3196");
+          throw new UnsupportedOperationException();
+        }
+      }
+    }
   }
 }

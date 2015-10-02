@@ -24,8 +24,11 @@ import java.util.List;
 import java.util.Map;
 
 import com.google.common.base.Charsets;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+
 import org.apache.calcite.util.BitSets;
+import org.apache.drill.common.exceptions.DrillRuntimeException;
 import org.apache.drill.common.expression.SchemaPath;
 import org.apache.drill.common.types.TypeProtos;
 import org.apache.drill.common.types.Types;
@@ -40,7 +43,7 @@ import org.apache.drill.exec.vector.ValueVector;
 
 
 // partition descriptor for file system based tables
-public class FileSystemPartitionDescriptor implements PartitionDescriptor {
+public class FileSystemPartitionDescriptor extends AbstractPartitionDescriptor {
 
   static final int MAX_NESTED_SUBDIRS = 10;          // allow up to 10 nested sub-directories
 
@@ -87,23 +90,13 @@ public class FileSystemPartitionDescriptor implements PartitionDescriptor {
   }
 
   @Override
-  public List<PartitionLocation> getPartitions() {
-    List<String> fileLocations = ((FormatSelection) scanRel.getDrillTable().getSelection()).getAsFiles();
-    List<PartitionLocation> partitions = new LinkedList<>();
-    for (String file: fileLocations) {
-      partitions.add(new DFSPartitionLocation(MAX_NESTED_SUBDIRS, getBaseTableLocation(), file));
-    }
-    return partitions;
-  }
-
-  @Override
   public void populatePartitionVectors(ValueVector[] vectors, List<PartitionLocation> partitions,
                                        BitSet partitionColumnBitSet, Map<Integer, String> fieldNameMap) {
     int record = 0;
     for (PartitionLocation partitionLocation: partitions) {
       for (int partitionColumnIndex : BitSets.toIter(partitionColumnBitSet)) {
         if (partitionLocation.getPartitionValue(partitionColumnIndex) == null) {
-          ((NullableVarCharVector) vectors[partitionColumnIndex]).getMutator().setNull(record);
+          throw new DrillRuntimeException("Value for directory cannot be null");
         } else {
           byte[] bytes = (partitionLocation.getPartitionValue(partitionColumnIndex)).getBytes(Charsets.UTF_8);
           ((NullableVarCharVector) vectors[partitionColumnIndex]).getMutator().setSafe(record, bytes, 0, bytes.length);
@@ -133,4 +126,16 @@ public class FileSystemPartitionDescriptor implements PartitionDescriptor {
     final FormatSelection origSelection = (FormatSelection) scanRel.getDrillTable().getSelection();
     return origSelection.getSelection().selectionRoot;
   }
+
+  @Override
+  protected void createPartitionSublists() {
+    List<String> fileLocations = ((FormatSelection) scanRel.getDrillTable().getSelection()).getAsFiles();
+    List<PartitionLocation> locations = new LinkedList<>();
+    for (String file: fileLocations) {
+      locations.add(new DFSPartitionLocation(MAX_NESTED_SUBDIRS, getBaseTableLocation(), file));
+    }
+    locationSuperList = Lists.partition(locations, PartitionDescriptor.PARTITION_BATCH_SIZE);
+    sublistsCreated = true;
+  }
+
 }
